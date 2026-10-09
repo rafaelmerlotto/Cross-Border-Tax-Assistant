@@ -1,0 +1,47 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+provider = "prisma-client"
+output = "../generated/prisma"
+}
+
+datasource db {
+provider = "postgresql"
+}
+
+model User {
+id Int @id @default(autoincrement())
+email String @unique
+name String?
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
+}
+
+enum ConsultationStatus {
+IN_PROGRESS
+COMPLETED
+EXPIRED
+}
+
+model Consultation {
+id String @id @default(uuid())
+status ConsultationStatus @default(IN_PROGRESS)
+
+taxYear Int
+
+answers Json
+caseContext Json?
+ruleResults Json?
+requirements Json?
+report Json?
+
+createdAt DateTime @default(now())
+completedAt DateTime?
+expiresAt DateTime?
+
+@@index([status])
+@@index([expiresAt])
+}

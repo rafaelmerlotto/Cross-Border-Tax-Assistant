@@ -1,0 +1,19 @@
+# TaxPri
+
+> Cross-border tax orientation tool that helps cross-border workers between Slovenia and Italy, Croatia, and Austria understand their tax situation and what actions to take.
+
+## Product overview
+
+- [Homepage](https://taxpri.vercel.app/): Start your free analysis
+- [How it works](https://taxpri.vercel.app/#how-it-works): Answer questions → rule-based analysis → get results and document checklist
+
+## Supported scenarios
+
+- [Italy-Slovenia cross-border work](https://taxpri.vercel.app/): Resident in Slovenia, employer in Italy
+- [Croatia-Slovenia cross-border work](https://taxpri.vercel.app/): Resident in Slovenia, employer in Croatia
+- [Austria-Slovenia cross-border work](https://taxpri.vercel.app/): Resident in Slovenia, employer in Austria (days and employer presence need verification)
+
+## Important information
+
+- This tool provides orientation only, not tax advice
+- Results are based on rule-based analysis; specific cases require confirmation from a professional
