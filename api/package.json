@@ -6,9 +6,13 @@
   "author": "OnceStack",
   "type": "module",
   "main": "app.ts",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "test": "vitest",
     "test:run": "vitest run",
+    "typecheck": "tsc --noEmit",
     "dev": "nodemon --exec tsx src/server.ts",
     "start": "tsx src/server.ts",
     "seed": "tsx prisma/seed/index.ts"
