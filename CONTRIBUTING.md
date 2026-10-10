@@ -49,15 +49,14 @@ If you plan to work on something substantial, please open an issue first so we c
 
 ```bash
 cd api
-npm install
-npx prisma generate
+npm ci               # installs the versions pinned in package-lock.json
+npx prisma generate  # writes the client to api/generated/prisma (gitignored)
 ```
 
-Create `api/.env`:
+Create `api/.env` from the template and point `DATABASE_URL` at your PostgreSQL instance:
 
-```dotenv
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/taxpri"
-PORT=4000
+```bash
+cp .env.example .env
 ```
 
 Apply the schema and start the server:
@@ -67,24 +66,27 @@ npx prisma migrate dev
 npm run dev
 ```
 
+The API test suite does **not** need this database — `npm run test:run` works without PostgreSQL, because Prisma is mocked in the HTTP tests.
+
 ### Set up the web app
 
 ```bash
 cd web
-npm install
+npm ci
+cp .env.example .env   # VITE_API_URL defaults to http://localhost:4000
+npm run dev            # http://localhost:5173
 ```
 
-Create `web/.env`:
+Never commit `.env` files. Both packages gitignore them, and both ship a `.env.example` describing the required variables.
 
-```dotenv
-VITE_API_URL=http://localhost:4000
-```
+### Useful commands
 
 ```bash
-npm run dev   # http://localhost:5173
+cd api && npm run typecheck   # tsc --noEmit over src/, lib/ and prisma/seed/
+cd api && npm run test:run    # full test suite, no database required
+cd web && npm run lint        # oxlint
+cd web && npm run build       # tsc -b && vite build
 ```
-
-Never commit `.env` files. Both packages already gitignore them.
 
 ---
 
@@ -283,9 +285,12 @@ Guidelines:
 cd api
 npm run test:run   # single run
 npm test           # watch mode
+npm run typecheck  # tsc --noEmit over src/, lib/ and prisma/seed/
 ```
 
-Vitest with Supertest drives the Express app in-process.
+Vitest with Supertest drives the Express app in-process, and **the suite needs no database**: Prisma is mocked in the HTTP tests and the domain tests are pure functions. Keep it that way — a contribution that requires a running PostgreSQL instance to run the default suite will be asked to change.
+
+Shared test builders live in `api/src/test/factories.ts` (`makeAnswers`, `makeCaseContext`, `runPipeline`, `requirementIdsOf`). Use them instead of inlining a full `CaseContext`, so that adding a field to the domain model only requires updating one place.
 
 What we expect in a pull request:
 
@@ -296,7 +301,7 @@ What we expect in a pull request:
 
 There is currently no test suite for `web/`. If you add one, Vitest plus React Testing Library is the natural choice, and `package.json` would need a `test` script.
 
-Please do not submit pull requests that only add tests for trivial code, and do not weaken or delete existing assertions to make a build pass.
+Please do not submit pull requests that only add tests for trivial code, and do not weaken or delete existing assertions to make a build pass. If a test encodes a known defect on purpose — several do, and they say so in a comment — fix the defect and update that test rather than deleting it.
 
 ---
 
@@ -312,13 +317,17 @@ Please do not submit pull requests that only add tests for trivial code, and do 
 
 Before opening a pull request, please confirm:
 
-- [ ] `cd web && npm run build` succeeds (this runs `tsc -b` as well).
-- [ ] `cd web && npm run lint` has no new errors.
+- [ ] `cd api && npm run typecheck` passes.
 - [ ] `cd api && npm run test:run` passes.
+- [ ] `cd web && npm run lint` has no new errors.
+- [ ] `cd web && npm run build` succeeds (this runs `tsc -b` as well).
 - [ ] New or changed domain logic has tests.
+- [ ] No dependency was added without also updating `package-lock.json` (`npm install`, never a hand-edited lockfile).
 - [ ] `README.md` is updated if behaviour, the API surface, configuration, or the known-limitations list changed.
 - [ ] No `.env` file, credential, generated Prisma client or `api/tmp/*.pdf` is included.
 - [ ] New legal claims reference at least one official source.
+
+The same checks run in CI (`.github/workflows/ci.yml`) on every push to `main`/`dev` and on every pull request, so a green local run means a green pipeline.
 
 In the description, state what changed, why, and how you verified it. Link the issue it closes (`Closes #123`).
 
