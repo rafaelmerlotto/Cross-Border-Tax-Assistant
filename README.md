@@ -65,10 +65,13 @@ Early-stage MVP, functional end-to-end. The full vertical slice works: questionn
 | REST API | Implemented |
 | Web questionnaire + result dashboard | Implemented |
 | Persistence (PostgreSQL + Prisma) | Implemented |
-| Automated tests | Minimal — see [Testing](#testing) |
+| Automated tests | 111 tests across the domain, PDF rendering and the HTTP contract — no database required |
+| CI (GitHub Actions) | Typecheck, tests, lint and web build |
+| Docker | Multi-stage `api/Dockerfile` with a health check |
+| LICENSE | MIT |
 | Authentication / user accounts | Not implemented (by design, anonymous) |
 | Data-retention sweeper | Not implemented |
-| CI / Docker / LICENSE | CI and Docker absent; LICENSE now included |
+| Database integration tests | Not implemented |
 
 ---
 
@@ -149,11 +152,17 @@ Cross-Border-Tax-Assistant/
 ├── LICENSE                      MIT
 ├── CONTRIBUTING.md              contribution guide
 ├── .gitignore                   ignores docs/ (see note below)
+├── .github/
+│   └── workflows/ci.yml         CI: api typecheck+tests, web lint+build
 │
 ├── api/                         Express + Prisma backend
-│   ├── package.json
+│   ├── package.json             + engines, typecheck script
+│   ├── package-lock.json        committed: `npm ci` depends on it
+│   ├── Dockerfile               2-stage build, non-root, healthcheck
+│   ├── .dockerignore
+│   ├── .env.example
 │   ├── prisma.config.ts
-│   ├── tsconfig.json
+│   ├── tsconfig.json            covers src/, lib/ and prisma/seed/
 │   ├── lib/
 │   │   └── prisma.ts            PrismaClient + PrismaPg adapter
 │   ├── prisma/
@@ -162,6 +171,8 @@ Cross-Border-Tax-Assistant/
 │   │   └── seed/                consultation.seed.ts, user.seed.ts, index.ts
 │   └── src/
 │       ├── server.ts            bootstrap, GET /, listen
+│       ├── test/
+│       │   └── factories.ts     makeAnswers, makeCaseContext, runPipeline
 │       ├── handlers/
 │       │   └── health.ts        GET /api/health
 │       ├── shared/
@@ -169,17 +180,20 @@ Cross-Border-Tax-Assistant/
 │       │   ├── types/           consultation.ts, user.ts
 │       │   └── utils/express.ts app assembly, CORS, route mounts
 │       └── modules/
-│           ├── case-context/    answers.ts, case-builder.ts, types.ts
-│           ├── rules/           engine.ts, types.ts, rules/ (9 rules)
+│           ├── case-context/    answers.ts, case-builder.ts, types.ts, *.test.ts
+│           ├── rules/           engine.ts, types.ts, rules/ (9 rules), engine.test.ts
 │           ├── requirements/    registry.ts, service.ts, types.ts, requirements/ (12)
-│           ├── sources/         registry.ts, types.ts, sources/ (4)
-│           ├── reports/         report-builder.ts, types.ts
-│           ├── consultation/    controller, service, repository, schema, types, tests
+│           ├── sources/         registry.ts, types.ts, sources/ (4), registry.test.ts
+│           ├── reports/         report-builder.ts, types.ts, *.test.ts
+│           ├── consultation/    controller, service, repository, schema, types,
+│           │                    consultation.test.ts, consultation.fixtures.ts
 │           ├── users/           user.controller.ts, user.test.ts
-│           └── pdf/             pdf.service.ts, fonts/*.ttf, images/logo.png
+│           └── pdf/             pdf.service.ts, pdf.service.test.ts,
+│                                fonts/*.ttf, images/logo.png
 │
 └── web/                         React + Vite frontend
-    ├── package.json
+    ├── package.json             + engines, typecheck script
+    ├── .env.example
     ├── index.html
     ├── vite.config.ts
     ├── vercel.json              SPA rewrite config
@@ -937,7 +951,14 @@ The visual language is deliberately **neo-brutalist / editorial**: 2 px black bo
 | --- | --- | --- | --- |
 | `VITE_API_URL` | yes | `http://localhost:4000` | Base URL of the API; no trailing slash, no `/api` suffix |
 
-There is currently **no `.env.example`** in either package. When setting up the project, create both files by hand. Note also that `DATABASE_URL` is consumed by Prisma at the **repository root of `api/`** — run Prisma commands from inside `api/`.
+Both packages ship a **`.env.example`** documenting the variables above. Copy it to `.env` and adjust the values:
+
+```bash
+cp api/.env.example api/.env
+cp web/.env.example web/.env
+```
+
+`.env` is gitignored in both packages. Note that `DATABASE_URL` is consumed by Prisma relative to the **`api/`** directory — run Prisma commands from inside `api/`. For production, set `VITE_API_URL` in the hosting provider (for example the Vercel project settings) rather than committing a `.env`.
 
 ### Other configuration files
 
@@ -971,15 +992,14 @@ cd Cross-Border-Tax-Assistant
 
 ```bash
 cd api
-npm install          # also runs prisma generate via the postinstall-less flow; run it explicitly if needed
+npm ci               # installs the versions pinned in package-lock.json
 npx prisma generate  # generates the client into api/generated/prisma (gitignored)
 ```
 
-Create `api/.env`:
+Create `api/.env` from the template:
 
-```dotenv
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/taxpri"
-PORT=4000
+```bash
+cp .env.example .env   # then edit DATABASE_URL to point at your PostgreSQL instance
 ```
 
 Create the database schema and optionally seed it:
@@ -1005,13 +1025,13 @@ In a second terminal:
 
 ```bash
 cd web
-npm install
+npm ci
 ```
 
-Create `web/.env`:
+Create `web/.env` from the template:
 
-```dotenv
-VITE_API_URL=http://localhost:4000
+```bash
+cp .env.example .env   # VITE_API_URL defaults to http://localhost:4000
 ```
 
 Start the dev server:
@@ -1035,25 +1055,32 @@ Remember that `api/tmp/` must be writable at runtime: the PDF service writes `tm
 
 ## Testing
 
-Testing setup lives in the API package only.
+Testing lives in the API package, and **the whole suite runs without a database**: Prisma is mocked in the HTTP tests, and the domain tests are pure functions over plain objects.
 
 ```bash
 cd api
 npm test          # vitest in watch mode
 npm run test:run  # single run, suitable for CI
+npm run typecheck # tsc --noEmit over src/, lib/ and prisma/seed/
 ```
 
 Vitest with Supertest drives the Express app in-process via `request(server)`.
 
-Coverage today is **minimal and partly incorrect**, and this is the highest-value area for contribution:
+| Test file | Coverage |
+| --- | --- |
+| `src/modules/rules/engine.test.ts` | Engine orchestration, plus positive and negative cases for each of the nine rules; registry invariants (no dangling requirement IDs, unique IDs, well-formed version and effective date, determinism) |
+| `src/modules/requirements/service.test.ts` | Rule → requirement resolution, deduplication across rules, registry ordering, silently dropped unknown IDs, and the exact requirement set for the flagship scenario |
+| `src/modules/reports/report-builder.test.ts` | Summary lines, attention points, required-document filtering and deduplication, source resolution and dedup, professional-review trigger |
+| `src/modules/case-context/case-builder.test.ts` | 1:1 answer → context mapping, the hard-coded employment type, and sparse input |
+| `src/modules/sources/registry.test.ts` | Every requirement `sourceId` resolves, unique IDs, no secondary/blog authorities |
+| `src/modules/pdf/pdf.service.test.ts` | Renders real PDFs for a full case, a minimal record, a case with no requirements and a property-abroad case (magic bytes, size, EOF marker) |
+| `src/modules/consultation/consultation.test.ts` | `POST /api/consultation` (validation failures, the full pipeline, 30-day expiry) and `GET /api/consultation/:id` (200 and the documented 403) |
+| `src/modules/users/user.test.ts` | `POST /api/sign_up` (201, 409, no insert on duplicate, the unvalidated empty body) |
+| `src/modules/consultation/consultation.fixtures.ts` | Shared fixtures — **not** a test file |
 
-| Test file | What it covers | Notes |
-| --- | --- | --- |
-| `src/modules/users/user.test.ts` | `POST /api/sign_up` — `201` on creation, `409` on duplicate email | Cleans up the test user in `afterEach` |
-| `src/modules/consultation/consultation.test.ts` | Asserts `201` | **Bug:** it POSTs to `/api/sign_up`, not `/api/consultation`, so the consultation pipeline is not actually exercised |
-| `src/modules/consultation/consultation.mock.test.ts` | Fixtures only: `answersMock`, `caseContextMock`, `ruleResultsMock`, `requirementsMock`, `reportMock` | No assertions; used as shared test data |
+Shared builders live in `src/test/factories.ts` (`makeAnswers`, `makeCaseContext`, `runPipeline`, `requirementIdsOf`).
 
-The domain modules — `evaluateRules`, `buildCaseContext`, `buildRequirements`, `buildReport` — are pure functions with no I/O and are therefore ideal for unit testing, but currently have **no direct test coverage at all**. The frontend has no test script and no test files.
+**Not covered yet:** the frontend has no test setup, and there are no integration tests against a real PostgreSQL instance — `prisma.consultation.create` and the `GET /:id/pdf` route are exercised only through the HTTP layer with a mocked Prisma client. See the [Roadmap](#roadmap).
 
 ---
 
@@ -1065,13 +1092,14 @@ The domain modules — `evaluateRules`, `buildCaseContext`, `buildRequirements`,
 | --- | --- | --- |
 | `npm run dev` | `nodemon --exec tsx src/server.ts` | Development server with restart-on-change |
 | `npm start` | `tsx src/server.ts` | Run the server directly (type-stripping, no build) |
+| `npm run typecheck` | `tsc --noEmit` | Type-check `src/`, `lib/` and `prisma/seed/` |
 | `npm test` | `vitest` | Watch-mode tests |
 | `npm run test:run` | `vitest run` | Single test run |
 | `npm run seed` | `tsx prisma/seed/index.ts` | Seed a demo consultation |
 
 Prisma commands are run directly (`npx prisma generate | migrate dev | migrate deploy | studio`).
 
-Note there is **no build script** in `api/`: `tsx` strips types at runtime and no compilation step is configured for deployment.
+Note there is **no build script** in `api/`: `tsx` strips types at runtime and no compilation step is configured for deployment. A consequence is that `tsx`, `dotenv` and `prisma` are declared as devDependencies yet required at runtime — see [Known limitations](#known-limitations-and-technical-debt).
 
 ### `web/`
 
@@ -1079,6 +1107,7 @@ Note there is **no build script** in `api/`: `tsx` strips types at runtime and n
 | --- | --- | --- |
 | `npm run dev` | `vite` | Dev server on port 5173 with HMR |
 | `npm run build` | `tsc -b && vite build` | Type-check the project references, then bundle to `dist/` |
+| `npm run typecheck` | `tsc -b` | Type-check only, without bundling |
 | `npm run lint` | `oxlint` | Static analysis (not part of the build) |
 | `npm run preview` | `vite preview` | Serve the production build locally |
 
@@ -1104,16 +1133,29 @@ There is no `headers` block, so no CSP, HSTS or cache-control headers are config
 
 ### Backend → any Node host
 
-The API is a long-running Express process. It needs:
+There are two supported paths: use the **`api/Dockerfile`**, or run the process directly.
+
+With Docker:
+
+```bash
+cd api
+docker build -t taxpri-api .
+docker run --rm -p 4000:4000 \
+  -e DATABASE_URL="postgresql://user:pass@host:5432/taxpri" \
+  taxpri-api
+```
+
+The image is a two-stage build that installs from the lockfile, regenerates the Prisma client, creates the writable `tmp/` directory, runs as the non-root `node` user and defines a `HEALTHCHECK` against `/api/health`. It installs devDependencies on purpose, because the API has no build step and executes TypeScript through `tsx` at runtime.
+
+Running directly, the process needs:
 
 1. `DATABASE_URL` and `PORT` in the environment.
 2. `npx prisma migrate deploy` at deploy time.
 3. A **writable `tmp/` directory** in the process working directory for PDF output.
 4. `npx prisma generate` before start, since the generated client is gitignored.
+5. Dependencies installed **including devDependencies** (`npm ci`, not `npm ci --omit=dev`), for the same reason.
 
-There is currently no `Dockerfile`, no `docker-compose.yml`, no CI workflow and no build step — a container image would need to install dependencies, run `prisma generate`, and start `tsx src/server.ts`.
-
-Note that `api/.gitignore` ignores `package-lock.json`, so API dependency resolution is not reproducible; committing a lockfile is a recommended first change for production use.
+There is still no `docker-compose.yml`, so PostgreSQL must be provided separately.
 
 ---
 
@@ -1176,10 +1218,10 @@ This section is intentionally explicit. The project is an MVP and several parts 
 
 ### Types and tooling
 
-21. **Duplicated type definitions**: `RuleResult` is declared in both `rules/types.ts` and `reports/types.ts`; `shared/types/{user,consultation}.ts` declare `User` and `Consultation` **without `export`**, and `user.controller.ts` uses `User` without importing it (a TypeScript error that `tsx` masks at runtime).
+21. **Duplicated type definitions**: `RuleResult` is declared in both `rules/types.ts` and `reports/types.ts`.
 22. **`Report.sources` is typed `any`** while actually holding `Source[]`.
 23. **`CreateConsultationData` and `ConsultationInput` use `any`** for all five persisted artefacts.
-24. **`api/tsconfig.json` excludes real code**: its second `include` entry (`prisma/config.ts`) does not exist, so `lib/prisma.ts` and `prisma/seed/**` fall outside the TypeScript program.
+24. **The shared model types are implicit globals.** `shared/types/user.ts` and `shared/types/consultation.ts` contain no `import` or `export`, which makes them *script* files: `User` and `Consultation` therefore become ambient types visible to the entire program. That is why `user.controller.ts` compiles while using `User` without importing it. It works, but it silently defeats module boundaries — both files should use `export type` and call sites should import explicitly.
 25. **The web app is not in strict mode** (`strict` is absent from both web tsconfigs), which is why `any` payloads and `catch (error: any)` compile.
 26. **Frontend error status handling is dead code**: `Result.tsx` checks `err?.status === 404`, but `services/api.ts` throws plain `Error` objects without a `status`, so a missing consultation never renders the `NotFound` page.
 27. **`defaultValues.taxYear = new Date().getFullYear()`** does not match any rendered `<option>` (only 2025, 2024, 2023 are listed), so the default year cannot be displayed.
@@ -1192,10 +1234,24 @@ This section is intentionally explicit. The project is an MVP and several parts 
 31. **`bg-mist-50` is not a Tailwind v4 color** and no `--color-mist-*` token is defined, so those two class usages in `Result.tsx` emit no CSS.
 32. **Accessibility gaps**: form labels are not associated with their selects (no `htmlFor`/`id`), the header logo is a non-focusable `onClick` on an `<img>`, the `ServerStatus` tooltip is mouse-only, and there are no `aria-live` regions for async state.
 
-### Missing project infrastructure
+### Project infrastructure
 
-33. **No CI** (no `.github/workflows`), **no Dockerfile**, **no `.env.example`**, **no `engines` field**, and **no lockfile committed for the API package**.
-34. **Tests do not cover the domain**, and the one consultation test targets the wrong endpoint.
+The following gaps **have been closed**:
+
+33. **CI** — `.github/workflows/ci.yml` runs on every push to `main`/`dev` and on every pull request. The `api` job installs from the lockfile, runs `prisma generate`, `npm run typecheck` and `npm run test:run`; the `web` job runs `npm run lint` and `npm run build`. **No database service is required**, because the suite mocks Prisma.
+34. **Dockerfile** — `api/Dockerfile` is a two-stage build that installs from the lockfile, regenerates the Prisma client, creates the writable `tmp/` directory, drops to the non-root `node` user and defines a `HEALTHCHECK` against `/api/health`. A matching `api/.dockerignore` keeps secrets and `node_modules` out of the image.
+35. **`.env.example`** — added for both packages, so the required variables are discoverable without reading the source.
+36. **`engines`** — both packages now declare `"node": ">=20"`.
+37. **API lockfile** — `api/package-lock.json` is committed; it was previously listed in `api/.gitignore`, which made `npm ci` impossible.
+38. **Domain test coverage** — 111 tests covering the rules engine, requirement resolution, report assembly, the case builder, the source registry, PDF rendering and the HTTP contract. Test fixtures were renamed from `consultation.mock.test.ts` to `consultation.fixtures.ts`, because a `*.test.ts` file containing no tests made Vitest fail the run.
+
+Still outstanding in this area:
+
+39. **`tsx`, `dotenv`, `prisma` and `nodemon` are devDependencies but needed at runtime.** The API has no build step, so production installs must include devDependencies — which is why the Dockerfile uses `npm ci` rather than `npm ci --omit=dev`. Adding a real `tsc` build and moving the runtime packages to `dependencies` would shrink the image and make the distinction meaningful.
+40. **No `docker-compose.yml`.** There is no one-command way to bring up PostgreSQL plus the API plus the web dev server; contributors follow the README steps manually.
+41. **No integration tests against a real database**, so the repository layer and `prisma migrate` are not verified in CI.
+42. **No frontend test setup** and no lint/test gate on the web package beyond `lint` and `build`.
+43. **No coverage reporting** and no minimum coverage threshold.
 
 ---
 
@@ -1203,15 +1259,15 @@ This section is intentionally explicit. The project is an MVP and several parts 
 
 Short-term, in rough priority order:
 
-1. **Align the Zod schema with `ConsultationAnswers`** so the day-count, permanent-home and remote-work-days signals actually reach the rules engine; unify `remoteWork` on a single representation.
-2. **Add unit tests for the pure domain**: `buildCaseContext`, `evaluateRules` (per rule, positive and negative cases), `buildRequirements`, `buildReport`. These functions need no database or HTTP.
-3. **Fix the consultation test** to POST to `/api/consultation` and assert the pipeline output.
-4. **Add a real end-to-end test** covering `POST → GET → GET /pdf`.
-5. **Consistent error contract**: return `404` for a missing consultation, wrap the PDF handler, and standardize error bodies.
-6. **Implement data retention**: enforce `expiresAt` on read and add a sweep using the existing `expiresAt` index.
-7. **Harden**: secure headers, CORS allow-list, optional request-size limits, validated or removed `sign_up`.
-8. **Refresh the seed data** to the current domain shape, and fix the tax-treaty source URL.
-9. **Project hygiene**: LICENSE (done), CONTRIBUTING (done), `.env.example` files, a committed API lockfile, and a GitHub Actions workflow running lint, type-check, tests and the web build.
+1. **Align the Zod schema with `ConsultationAnswers`** so the day-count, permanent-home and remote-work-days signals actually reach the rules engine; unify `remoteWork` on a single representation. This is the highest-impact correctness fix available.
+2. **Add database integration tests**: a PostgreSQL service container in CI covering `prisma migrate deploy`, `createConsultationRecord` and the `GET /:id/pdf` route end to end. The unit suite mocks Prisma, so persistence is currently unverified.
+3. **Consistent error contract**: return `404` for a missing consultation, wrap the PDF handler, and standardize error bodies.
+4. **Implement data retention**: enforce `expiresAt` on read and add a sweep using the existing `expiresAt` index.
+5. **Harden**: secure headers, CORS allow-list, optional request-size limits, validated or removed `sign_up`.
+6. **Refresh the seed data** to the current domain shape, and fix the tax-treaty source URL.
+7. **Introduce a real build step for the API** (`tsc`) and move `tsx`, `dotenv` and `prisma` from devDependencies to dependencies, so production installs can omit devDependencies and the Docker image shrinks.
+8. **Add a `docker-compose.yml`** covering PostgreSQL, the API and the web dev server for one-command local setup.
+9. **Set up frontend testing** (Vitest + React Testing Library), fix the accessibility gaps, and add a coverage threshold.
 10. **Remove dead code and unused dependencies** listed above.
 
 Medium-term:
@@ -1233,7 +1289,7 @@ Long-term:
 
 Contributions are welcome — new rules, new country corridors, tests, documentation and bug fixes. Please read [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow, coding conventions and the checklist for adding a rule.
 
-The most valuable contributions right now are the ones in the [Roadmap](#roadmap): domain unit tests, schema alignment, and the missing project infrastructure.
+The most valuable contributions right now are the ones in the [Roadmap](#roadmap): aligning the API contract with the domain model, adding database integration tests, and fixing the accessibility gaps on the frontend.
 
 A few ground rules:
 
